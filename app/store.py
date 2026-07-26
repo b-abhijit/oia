@@ -5,9 +5,6 @@ import psycopg
 from psycopg.rows import dict_row
 from .config import DATABASE_URL
 from .models import StoredRun
-from pathlib import Path
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
 
 
 def get_conn():
