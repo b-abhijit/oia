@@ -1,7 +1,7 @@
+# app/planner.py
 from __future__ import annotations
 
 from .models import Diagnosis, IncidentRequest
-
 
 SAFE_EFFECT_HINTS = {
     "rollback": {"bad_deploy", "config_change", "release_regression"},
@@ -10,7 +10,6 @@ SAFE_EFFECT_HINTS = {
     "restart": {"stuck_worker", "memory_leak"},
     "scale": {"traffic_spike", "capacity_issue"},
 }
-
 
 def choose_evidence_lines(transcript: str, maximum: int = 4) -> list[str]:
     evidence = []
@@ -26,10 +25,8 @@ def choose_evidence_lines(transcript: str, maximum: int = 4) -> list[str]:
         evidence.append(f"ev_fallback_{len(evidence)+1}")
     return evidence[:maximum]
 
-
 def normalize(text: str) -> str:
     return text.strip().lower().replace("-", "_").replace(" ", "_")
-
 
 def choose_root_cause(req: IncidentRequest) -> str:
     transcript = normalize(req.incident.transcript)
@@ -52,37 +49,30 @@ def choose_root_cause(req: IncidentRequest) -> str:
 
     return allowed[0] if allowed else "unknown"
 
-
 def choose_diagnostics(req: IncidentRequest, evidence: list[str]) -> list[dict]:
     diagnostics = []
     for tool in req.toolCatalog:
         if tool.name in req.policy.effectTools:
             continue
-        diagnostics.append(
-            {
-                "toolName": tool.name,
-                "arguments": {
-                    "incidentId": req.incident.incidentId,
-                    "service": req.incident.service,
-                    "severity": req.incident.severity,
-                },
-                "evidence": evidence[:1],
-            }
-        )
+        diagnostics.append({
+            "toolName": tool.name,
+            "arguments": {
+                "incidentId": req.incident.incidentId,
+                "service": req.incident.service,
+                "severity": req.incident.severity,
+            },
+            "evidence": evidence[:1],
+        })
         if len(diagnostics) >= req.policy.maximumDiagnostics:
             break
     return diagnostics
 
-
 def choose_effect_plan(req: IncidentRequest, root_cause: str, evidence: list[str]) -> dict | None:
     root = normalize(root_cause)
-
     for tool in req.toolCatalog:
         if tool.name not in req.policy.effectTools:
             continue
-
         tool_name = normalize(tool.name)
-
         for hint, supported_causes in SAFE_EFFECT_HINTS.items():
             if hint in tool_name and root in supported_causes:
                 return {
@@ -95,16 +85,12 @@ def choose_effect_plan(req: IncidentRequest, root_cause: str, evidence: list[str
                     "evidence": evidence,
                     "safeToAutoPropose": True,
                 }
-
     return None
-
 
 def plan_incident(req: IncidentRequest) -> tuple[Diagnosis, list[dict], dict | None]:
     evidence = choose_evidence_lines(req.incident.transcript, 4)[:2]
     root = choose_root_cause(req)
     diagnosis = Diagnosis(rootCause=root, evidence=evidence)
-
     diagnostics = choose_diagnostics(req, evidence)
     effect_plan = choose_effect_plan(req, root, evidence)
-
     return diagnosis, diagnostics, effect_plan

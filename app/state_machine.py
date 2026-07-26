@@ -1,3 +1,4 @@
+# app/state_machine.py
 from __future__ import annotations
 
 from fastapi import HTTPException
@@ -16,20 +17,16 @@ from .planner import plan_incident
 from .tracing import build_otlp
 from .utils import digest_json, make_id, new_span_id, new_trace_id, parse_traceparent
 
-
 def sanitize_request_body(body: dict) -> dict:
     clone = dict(body)
     sensitive = dict(clone.get("sensitive", {}))
     policy = clone.get("policy", {})
     blocked = set(policy.get("doNotExport", []))
-
     for key in list(sensitive.keys()):
         if key in blocked:
             sensitive[key] = "__redacted__"
-
     clone["sensitive"] = sensitive
     return clone
-
 
 def init_run(req: IncidentRequest, incoming_traceparent: str | None, incoming_tracestate: str | None) -> StoredRun:
     diagnosis, diagnostics, effect_plan = plan_incident(req)
@@ -46,7 +43,6 @@ def init_run(req: IncidentRequest, incoming_traceparent: str | None, incoming_tr
         "approval_gate_span_id": new_span_id(),
         "model_name": "starter-local-model",
     }
-
     if parent:
         trace_ctx["incoming_parent_span_id"] = parent["parent_id"]
     if incoming_tracestate:
@@ -54,13 +50,11 @@ def init_run(req: IncidentRequest, incoming_traceparent: str | None, incoming_tr
 
     action_log = []
     pending = {}
-
     for d in diagnostics:
         action_id = make_id("act")
         call_id = make_id("call")
         client_span_id = new_span_id()
         traceparent = f"00-{trace_id}-{client_span_id}-01"
-
         dispatch = Dispatch(
             actionId=action_id,
             callId=call_id,
@@ -100,10 +94,8 @@ def init_run(req: IncidentRequest, incoming_traceparent: str | None, incoming_tr
         receipts={},
     )
 
-
 def handle_receipt(run: StoredRun, receipt: ReceiptRequest) -> StoredRun:
     body_hash = digest_json(receipt.model_dump(mode="json"))
-
     if receipt.receiptId in run.receipts and run.receipts[receipt.receiptId] != body_hash:
         raise HTTPException(status_code=409, detail="receipt conflict")
     if receipt.receiptId in run.receipts:
@@ -120,7 +112,6 @@ def handle_receipt(run: StoredRun, receipt: ReceiptRequest) -> StoredRun:
         pending = run.pendingActions.get(out.actionId)
         if not pending or pending.attempt != out.attempt:
             raise HTTPException(status_code=422, detail="unknown or non-pending action outcome")
-
         run.state.receiptLog.append(
             ToolReceiptLog(
                 receiptId=receipt.receiptId,
@@ -137,12 +128,10 @@ def handle_receipt(run: StoredRun, receipt: ReceiptRequest) -> StoredRun:
 
         if out.status == 503 and out.attempt == 1:
             any_503 = True
-            retry = pending.model_copy(
-                update={
-                    "attempt": 2,
-                    "traceparent": f"00-{run.traceContext['trace_id']}-{new_span_id()}-01",
-                }
-            )
+            retry = pending.model_copy(update={
+                "attempt": 2,
+                "traceparent": f"00-{run.traceContext['trace_id']}-{new_span_id()}-01",
+            })
             run.pendingActions[retry.actionId] = retry
             run.state.actionLog.append(retry)
             run.state.dispatches.append(retry)
@@ -155,7 +144,6 @@ def handle_receipt(run: StoredRun, receipt: ReceiptRequest) -> StoredRun:
         pending = run.pendingApprovals.get(approval.approvalId)
         if not pending:
             raise HTTPException(status_code=422, detail="unknown approval")
-
         run.state.receiptLog.append(
             ApprovalReceiptLog(
                 receiptId=receipt.receiptId,
@@ -166,26 +154,24 @@ def handle_receipt(run: StoredRun, receipt: ReceiptRequest) -> StoredRun:
         )
         del run.pendingApprovals[approval.approvalId]
 
-        if approval.decision == "approved":
-            effect = run.effectPlan
-            if effect:
-                client_span_id = new_span_id()
-                dispatch = Dispatch(
-                    actionId=pending.actionId,
-                    callId=make_id("call"),
-                    phase="effect",
-                    toolName=pending.toolName,
-                    arguments=effect["arguments"],
-                    evidence=run.state.diagnosis.evidence,
-                    attempt=1,
-                    traceparent=f"00-{run.traceContext['trace_id']}-{client_span_id}-01",
-                    approvalId=approval.approvalId,
-                    approvalNonce=approval.nonce,
-                )
-                run.pendingActions[dispatch.actionId] = dispatch
-                run.state.actionLog.append(dispatch)
-                run.state.dispatches.append(dispatch)
-                run.state.chosenEffect = dispatch.toolName
+        if approval.decision == "approved" and run.effectPlan:
+            client_span_id = new_span_id()
+            dispatch = Dispatch(
+                actionId=pending.actionId,
+                callId=make_id("call"),
+                phase="effect",
+                toolName=pending.toolName,
+                arguments=run.effectPlan["arguments"],
+                evidence=run.state.diagnosis.evidence,
+                attempt=1,
+                traceparent=f"00-{run.traceContext['trace_id']}-{client_span_id}-01",
+                approvalId=approval.approvalId,
+                approvalNonce=approval.nonce,
+            )
+            run.pendingActions[dispatch.actionId] = dispatch
+            run.state.actionLog.append(dispatch)
+            run.state.dispatches.append(dispatch)
+            run.state.chosenEffect = dispatch.toolName
 
     diagnostics_complete = not run.pendingActions and not run.pendingApprovals
     effect_allowed = (
@@ -198,7 +184,6 @@ def handle_receipt(run: StoredRun, receipt: ReceiptRequest) -> StoredRun:
 
     if diagnostics_complete and effect_allowed:
         tool = run.effectPlan["toolName"]
-
         if tool in run.requestBody["policy"]["approvalRequiredFor"]:
             approval_req = ApprovalRequest(
                 approvalId=make_id("approval"),
