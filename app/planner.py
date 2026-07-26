@@ -21,8 +21,6 @@ def choose_evidence_lines(transcript: str, maximum: int = 4) -> list[str]:
                 evidence.append(ev)
         if len(evidence) >= maximum:
             break
-    while len(evidence) < 2:
-        evidence.append(f"ev_fallback_{len(evidence)+1}")
     return evidence[:maximum]
 
 def normalize(text: str) -> str:
