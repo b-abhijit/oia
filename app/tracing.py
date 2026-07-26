@@ -47,31 +47,29 @@ def build_otlp(state, trace_ctx) -> dict[str, Any]:
     plan_span_id = trace_ctx["plan_span_id"]
     join_span_id = trace_ctx["join_span_id"]
     approval_gate_span_id = trace_ctx["approval_gate_span_id"]
+    complete_span_id = trace_ctx.get("complete_span_id", "f" + join_span_id[1:])
 
     spans: list[dict[str, Any]] = []
-
     base = _base_attrs(state, trace_ctx)
 
-    server_attrs = base.copy()
     spans.append(
         _span(
             trace_id=trace_id,
             span_id=server_span_id,
             name="POST /v2/incidents",
             kind=2,
-            attrs=server_attrs,
+            attrs=base.copy(),
             parent_span_id=trace_ctx.get("incoming_parent_span_id"),
         )
     )
 
-    agent_attrs = base.copy()
     spans.append(
         _span(
             trace_id=trace_id,
             span_id=agent_span_id,
             name="invoke_agent incident-response",
             kind=1,
-            attrs=agent_attrs,
+            attrs=base.copy(),
             parent_span_id=server_span_id,
         )
     )
@@ -92,23 +90,29 @@ def build_otlp(state, trace_ctx) -> dict[str, Any]:
     )
 
     for dispatch in state.actionLog:
-        execute_span_id = dispatch.traceparent.split("-")[2]
+        client_span_id = dispatch.traceparent.split("-")[2]
+        exec_span_id = trace_ctx.setdefault("exec_span_ids", {}).get(dispatch.actionId)
+        if not exec_span_id:
+            exec_span_id = ("e" + client_span_id[1:])[:16]
+            trace_ctx["exec_span_ids"][dispatch.actionId] = exec_span_id
 
         execute_attrs = base.copy() + [
             _str_attr("ga5.action.id", dispatch.actionId),
-            _str_attr("gen_ai.tool.name", dispatch.toolName),
             _str_attr("gen_ai.tool.call.id", dispatch.callId),
-            _str_attr("gen_ai.operation.name", "execute_tool"),
-            _str_attr("ga5.phase", dispatch.phase),
             _int_attr("ga5.attempt", dispatch.attempt),
+            _str_attr("ga5.phase", dispatch.phase),
+            _str_attr("gen_ai.tool.name", dispatch.toolName),
+            _str_attr("gen_ai.operation.name", "execute_tool"),
         ]
         if dispatch.approvalId:
             execute_attrs.append(_str_attr("ga5.approval.id", dispatch.approvalId))
+        if dispatch.approvalNonce:
+            execute_attrs.append(_str_attr("ga5.approval.nonce", dispatch.approvalNonce))
 
         spans.append(
             _span(
                 trace_id=trace_id,
-                span_id=f"{execute_span_id[:15]}e",
+                span_id=exec_span_id,
                 name=f"execute_tool {dispatch.toolName}",
                 kind=1,
                 attrs=execute_attrs,
@@ -118,19 +122,63 @@ def build_otlp(state, trace_ctx) -> dict[str, Any]:
 
         client_attrs = base.copy() + [
             _str_attr("ga5.action.id", dispatch.actionId),
+            _str_attr("gen_ai.tool.call.id", dispatch.callId),
             _int_attr("ga5.attempt", dispatch.attempt),
             _str_attr("http.request.method", "POST"),
             _str_attr("gen_ai.tool.name", dispatch.toolName),
-            _str_attr("gen_ai.tool.call.id", dispatch.callId),
         ]
+        if dispatch.approvalId:
+            client_attrs.append(_str_attr("ga5.approval.id", dispatch.approvalId))
+
         spans.append(
             _span(
                 trace_id=trace_id,
-                span_id=execute_span_id,
+                span_id=client_span_id,
                 name=f"POST tool/{dispatch.toolName}",
                 kind=3,
                 attrs=client_attrs,
-                parent_span_id=f"{execute_span_id[:15]}e",
+                parent_span_id=exec_span_id,
+            )
+        )
+
+    receipt_count = 0
+    for entry in state.receiptLog:
+        receipt_count += 1
+        receipt_span_id = f"{receipt_count:016x}"[-16:]
+        attrs = base.copy() + [_str_attr("ga5.receipt.id", entry.receiptId)]
+
+        if hasattr(entry, "actionId"):
+            attrs.extend(
+                [
+                    _str_attr("ga5.action.id", entry.actionId),
+                    _str_attr("gen_ai.tool.call.id", entry.callId),
+                    _int_attr("ga5.attempt", entry.attempt),
+                    _int_attr("http.response.status_code", entry.status),
+                    _str_attr("ga5.result.class", entry.resultClass),
+                ]
+            )
+            if entry.nonce:
+                attrs.append(_str_attr("ga5.tool.nonce", entry.nonce))
+            if entry.errorType:
+                attrs.append(_str_attr("ga5.error.type", entry.errorType))
+            parent_span_id = join_span_id
+            span_name = "tool receipt"
+        else:
+            attrs.append(_str_attr("ga5.approval.id", entry.approvalId))
+            attrs.append(_str_attr("ga5.approval.decision", entry.decision))
+            if entry.nonce:
+                attrs.append(_str_attr("ga5.approval.nonce", entry.nonce))
+            parent_span_id = approval_gate_span_id
+            span_name = "approval receipt"
+
+        spans.append(
+            _span(
+                trace_id=trace_id,
+                span_id=receipt_span_id,
+                name=span_name,
+                kind=1,
+                attrs=attrs,
+                parent_span_id=parent_span_id,
             )
         )
 
@@ -154,6 +202,14 @@ def build_otlp(state, trace_ctx) -> dict[str, Any]:
         approval_attrs = base.copy() + [
             _int_attr("ga5.pending.approvals", len(state.approvals)),
         ]
+        for approval in state.approvals:
+            approval_attrs.extend(
+                [
+                    _str_attr("ga5.approval.id", approval.approvalId),
+                    _str_attr("ga5.action.id", approval.actionId),
+                    _str_attr("gen_ai.tool.name", approval.toolName),
+                ]
+            )
         spans.append(
             _span(
                 trace_id=trace_id,
@@ -165,9 +221,7 @@ def build_otlp(state, trace_ctx) -> dict[str, Any]:
             )
         )
 
-    complete_attrs = base.copy() + [
-        _str_attr("ga5.status", state.status),
-    ]
+    complete_attrs = base.copy() + [_str_attr("ga5.status", state.status)]
     if state.chosenEffect:
         complete_attrs.append(_str_attr("ga5.chosen.effect", state.chosenEffect))
     if state.suppressed:
@@ -176,7 +230,7 @@ def build_otlp(state, trace_ctx) -> dict[str, Any]:
     spans.append(
         _span(
             trace_id=trace_id,
-            span_id="f" + join_span_id[1:],
+            span_id=complete_span_id,
             name="complete run",
             kind=1,
             attrs=complete_attrs,
