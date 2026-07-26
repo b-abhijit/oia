@@ -6,11 +6,6 @@ from .models import IncidentRequest, ReceiptRequest
 from .state_machine import handle_receipt, init_run
 from .store import init_db, load_run, save_run
 from .utils import digest_json
-from .store import init_db, load_run, save_run
-
-@app.on_event("startup")
-def startup():
-    init_db()
 
 app = FastAPI(title="Observable Incident Agent")
 
