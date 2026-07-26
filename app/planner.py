@@ -13,7 +13,7 @@ from .models import Diagnosis, IncidentRequest
 # Configure these as environment variables in Vercel's project settings.
 PLANNER_API_URL = os.environ.get("PLANNER_API_URL", "https://api.openai.com/v1/chat/completions")
 PLANNER_API_KEY = os.environ.get("PLANNER_API_KEY")
-PLANNER_MODEL = os.environ.get("PLANNER_MODEL", "gpt-4o-mini")
+PLANNER_MODEL = os.environ.get("PLANNER_MODEL", "meta-llama/llama-3.2-3b-instruct:free")
 
 
 def _evidence_lines(transcript: str) -> list[tuple[str, str]]:
