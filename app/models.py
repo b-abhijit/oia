@@ -11,9 +11,9 @@ class ToolSpec(BaseModel):
 
 
 class Policy(BaseModel):
-    effectTools: list[str] = Field(default_factory=list)
+    effectTools: list[str] = Field(min_length=1)
     approvalRequiredFor: list[str] = Field(default_factory=list)
-    maximumDiagnostics: int = Field(default=1, ge=0, le=10)
+    maximumDiagnostics: int = Field(ge=1, le=10)
     doNotExport: list[str] = Field(default_factory=list)
 
 
@@ -44,13 +44,15 @@ class IncidentRequest(BaseModel):
     @model_validator(mode="after")
     def validate_request(self):
         if self.policy.maximumDiagnostics > len(self.toolCatalog):
-            self.policy.maximumDiagnostics = len(self.toolCatalog)
+            raise ValueError("maximumDiagnostics exceeds toolCatalog size")
+        if not self.incident.allowedRootCauses:
+            raise ValueError("allowedRootCauses must not be empty")
         return self
 
 
 class Diagnosis(BaseModel):
     rootCause: str
-    evidence: list[str]
+    evidence: list[str] = Field(default_factory=list)
 
 
 class Dispatch(BaseModel):
@@ -60,7 +62,7 @@ class Dispatch(BaseModel):
     toolName: str
     arguments: dict[str, Any]
     evidence: list[str] = Field(default_factory=list)
-    attempt: int = 1
+    attempt: int = Field(ge=1)
     traceparent: str
     approvalId: str | None = None
     approvalNonce: str | None = None
@@ -76,9 +78,9 @@ class ApprovalRequest(BaseModel):
 class ToolOutcome(BaseModel):
     actionId: str
     callId: str
-    attempt: int
-    status: int
-    resultClass: str
+    attempt: int = Field(ge=1)
+    status: int = Field(ge=0)
+    resultClass: str = Field(min_length=1)
     nonce: str | None = None
     errorType: str | None = None
 
