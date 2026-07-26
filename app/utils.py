@@ -47,4 +47,9 @@ def parse_traceparent(value: str | None):
         return None
     if trace_id == "0" * 32 or parent_id == "0" * 16:
         return None
-    return {"version": version, "trace_id": trace_id, "parent_id": parent_id, "flags": flags}
+    return {
+        "version": version,
+        "trace_id": trace_id,
+        "parent_id": parent_id,
+        "flags": flags,
+    }
