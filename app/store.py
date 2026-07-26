@@ -3,6 +3,7 @@ from __future__ import annotations
 import orjson
 import psycopg
 from psycopg.rows import dict_row
+
 from .config import DATABASE_URL
 from .models import StoredRun
 
@@ -14,12 +15,14 @@ def get_conn():
 def init_db() -> None:
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 create table if not exists incident_runs (
                     run_id text primary key,
                     payload jsonb not null
                 )
-            """)
+                """
+            )
         conn.commit()
 
 

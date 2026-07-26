@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Header, HTTPException, Response
 import orjson
+
 from .models import IncidentRequest, ReceiptRequest
 from .state_machine import handle_receipt, init_run
 from .store import init_db, load_run, save_run
@@ -15,7 +16,7 @@ def startup():
     init_db()
 
 
-def json_response(data, status_code=200):
+def json_response(data, status_code: int = 200) -> Response:
     return Response(
         content=orjson.dumps(data),
         media_type="application/json",
@@ -47,6 +48,7 @@ def post_receipt(run_id: str, receipt: ReceiptRequest):
     run = load_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="run not found")
+
     updated = handle_receipt(run, receipt)
     save_run(updated)
     return json_response(updated.state.model_dump(mode="json"))
