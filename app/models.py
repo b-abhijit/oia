@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
-PROFILE = "ga5-incident-agent/v2"
+
+class ToolSpec(BaseModel):
+    name: str = Field(min_length=1)
+    description: str | None = None
+
+
+class Policy(BaseModel):
+    effectTools: list[str] = Field(default_factory=list)
+    approvalRequiredFor: list[str] = Field(default_factory=list)
+    maximumDiagnostics: int = Field(default=1, ge=0, le=10)
+    doNotExport: list[str] = Field(default_factory=list)
 
 
 class Sensitive(BaseModel):
-    accessToken: str
-    privateNote: str
+    accessToken: str = Field(min_length=1)
+    privateNote: str = Field(min_length=1)
 
 
 class Incident(BaseModel):
@@ -20,60 +31,26 @@ class Incident(BaseModel):
     allowedRootCauses: list[str] = Field(min_length=1)
 
 
-class ToolCatalogItem(BaseModel):
-    name: str = Field(min_length=1)
-    description: str = ""
-    inputSchema: dict[str, Any] = Field(default_factory=dict)
-
-
-class Policy(BaseModel):
-    maximumDiagnostics: int = Field(ge=1, le=3)
-    effectTools: list[str] = Field(default_factory=list)
-    approvalRequiredFor: list[str] = Field(default_factory=list)
-    doNotExport: list[str] = Field(default_factory=list)
-
-
 class IncidentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    profile: str
+    profile: str = Field(min_length=1)
     runId: str = Field(min_length=8)
     agentName: str = Field(min_length=1)
     publicMarker: str = Field(min_length=1)
     sensitive: Sensitive
     incident: Incident
-    toolCatalog: list[ToolCatalogItem]
+    toolCatalog: list[ToolSpec] = Field(min_length=1)
     policy: Policy
 
     @model_validator(mode="after")
-    def validate_profile(self):
-        if self.profile != PROFILE:
-            raise ValueError("unsupported profile")
+    def validate_request(self):
+        if self.policy.maximumDiagnostics > len(self.toolCatalog):
+            self.policy.maximumDiagnostics = len(self.toolCatalog)
         return self
 
 
-class Outcome(BaseModel):
-    actionId: str
-    callId: str
-    attempt: int = Field(ge=1)
-    status: int | None = None
-    resultClass: str | None = None
-    nonce: str | None = None
-    errorType: str | None = None
-
-
-class ApprovalDecision(BaseModel):
-    approvalId: str
-    decision: Literal["approved", "denied"]
-    nonce: str
-
-
-class ReceiptRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    receiptId: str = Field(min_length=8)
-    outcomes: list[Outcome] = Field(default_factory=list)
-    approvals: list[ApprovalDecision] = Field(default_factory=list)
+class Diagnosis(BaseModel):
+    rootCause: str
+    evidence: list[str]
 
 
 class Dispatch(BaseModel):
@@ -83,7 +60,7 @@ class Dispatch(BaseModel):
     toolName: str
     arguments: dict[str, Any]
     evidence: list[str] = Field(default_factory=list)
-    attempt: int
+    attempt: int = 1
     traceparent: str
     approvalId: str | None = None
     approvalNonce: str | None = None
@@ -96,9 +73,26 @@ class ApprovalRequest(BaseModel):
     argumentsDigest: str
 
 
-class Diagnosis(BaseModel):
-    rootCause: str
-    evidence: list[str] = Field(min_length=2, max_length=4)
+class ToolOutcome(BaseModel):
+    actionId: str
+    callId: str
+    attempt: int
+    status: int
+    resultClass: str
+    nonce: str | None = None
+    errorType: str | None = None
+
+
+class ApprovalOutcome(BaseModel):
+    approvalId: str
+    decision: Literal["approved", "rejected"]
+    nonce: str | None = None
+
+
+class ReceiptRequest(BaseModel):
+    receiptId: str = Field(min_length=1)
+    outcomes: list[ToolOutcome] = Field(default_factory=list)
+    approvals: list[ApprovalOutcome] = Field(default_factory=list)
 
 
 class ToolReceiptLog(BaseModel):
@@ -106,8 +100,8 @@ class ToolReceiptLog(BaseModel):
     actionId: str
     callId: str
     attempt: int
-    status: int | None = None
-    resultClass: str | None = None
+    status: int
+    resultClass: str
     nonce: str | None = None
     errorType: str | None = None
 
@@ -115,13 +109,13 @@ class ToolReceiptLog(BaseModel):
 class ApprovalReceiptLog(BaseModel):
     receiptId: str
     approvalId: str
-    decision: str
-    nonce: str
+    decision: Literal["approved", "rejected"]
+    nonce: str | None = None
 
 
 class RunState(BaseModel):
     runId: str
-    status: Literal["waiting", "completed", "failed"]
+    status: Literal["waiting", "completed"] = "waiting"
     diagnosis: Diagnosis
     chosenEffect: str | None = None
     suppressed: list[str] = Field(default_factory=list)
@@ -133,12 +127,14 @@ class RunState(BaseModel):
 
 
 class StoredRun(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     requestHash: str
     requestBody: dict[str, Any]
     state: RunState
     pendingActions: dict[str, Dispatch] = Field(default_factory=dict)
     pendingApprovals: dict[str, ApprovalRequest] = Field(default_factory=dict)
     effectPlan: dict[str, Any] | None = None
-    traceContext: dict[str, str | None]
-    plannerUsed: bool = False
+    traceContext: dict[str, Any] = Field(default_factory=dict)
+    plannerUsed: bool = True
     receipts: dict[str, str] = Field(default_factory=dict)
