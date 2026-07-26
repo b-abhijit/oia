@@ -183,11 +183,15 @@ def handle_receipt(run: StoredRun, receipt: ReceiptRequest) -> StoredRun:
             run.state.chosenEffect = dispatch.toolName
 
     diagnostics_complete = not run.pendingActions and not run.pendingApprovals
+    # IMPORTANT: check cumulative state (run.state.suppressed), not just
+    # this receipt call's outcomes. A timeout recorded in an earlier
+    # receipt call must still block the effect even if this call's
+    # outcomes contain no timeout of their own.
     effect_allowed = (
         run.effectPlan is not None
         and run.effectPlan.get("safeToAutoPropose") is True
         and not run.state.chosenEffect
-        and not any_timeout
+        and not run.state.suppressed
         and not any_503
     )
 
@@ -202,6 +206,14 @@ def handle_receipt(run: StoredRun, receipt: ReceiptRequest) -> StoredRun:
             )
             run.pendingApprovals[approval_req.approvalId] = approval_req
             run.state.approvals.append(approval_req)
+            # Persist this so the approval_gate span still appears in the
+            # trace after the approval has been decided, not just while
+            # it's pending.
+            run.traceContext.setdefault("approval_records", []).append({
+                "approvalId": approval_req.approvalId,
+                "actionId": approval_req.actionId,
+                "toolName": approval_req.toolName,
+            })
         else:
             client_span_id = new_span_id()
             dispatch = Dispatch(

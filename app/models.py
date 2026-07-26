@@ -4,10 +4,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
+SUPPORTED_PROFILE = "ga5-incident-agent/v2"
+
 
 class ToolSpec(BaseModel):
     name: str = Field(min_length=1)
     description: str | None = None
+    inputSchema: dict[str, Any] | None = None
 
 
 class Policy(BaseModel):
@@ -43,10 +46,19 @@ class IncidentRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_request(self):
-        if self.policy.maximumDiagnostics > len(self.toolCatalog):
-            raise ValueError("maximumDiagnostics exceeds toolCatalog size")
+        if self.profile != SUPPORTED_PROFILE:
+            raise ValueError(f"unsupported profile: {self.profile!r}")
+        non_effect_tools = [t for t in self.toolCatalog if t.name not in self.policy.effectTools]
+        if self.policy.maximumDiagnostics > len(non_effect_tools):
+            raise ValueError("maximumDiagnostics exceeds available diagnostic tools")
         if not self.incident.allowedRootCauses:
             raise ValueError("allowedRootCauses must not be empty")
+        for tool in self.policy.effectTools:
+            if tool not in {t.name for t in self.toolCatalog}:
+                raise ValueError(f"effectTools references unknown tool: {tool}")
+        for tool in self.policy.approvalRequiredFor:
+            if tool not in {t.name for t in self.toolCatalog}:
+                raise ValueError(f"approvalRequiredFor references unknown tool: {tool}")
         return self
 
 
